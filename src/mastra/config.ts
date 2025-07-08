@@ -1,18 +1,32 @@
 import dotenv from "dotenv";
-import { createOllama } from "ollama-ai-provider";
+import { google } from '@ai-sdk/google';
+import { LanguageModelV1 } from "@ai-sdk/provider";
 
-// Load environment variables once at the beginning
+// Load environment variables from .env file at the root
 dotenv.config();
 
-// Export all your environment variables
-// Defaults to Ollama qwen2.5:1.5b
-// https://ollama.com/library/qwen2.5
-export const modelName = process.env.MODEL_NAME_AT_ENDPOINT ?? "qwen2.5:1.5b";
-export const baseURL = process.env.API_BASE_URL ?? "http://127.0.0.1:11434/api";
+// --- Flexible Model Configuration ---
 
-// Create and export the model instance
-export const model = createOllama({ baseURL }).chat(modelName, {
-  simulateStreaming: true,
-});
+// Use an environment variable to choose the AI provider.
+// Defaults to 'google' for your development with Gemini.
+const provider = process.env.AI_PROVIDER ?? "google";
 
-console.log(`ModelName: ${modelName}\nbaseURL: ${baseURL}`);
+let model: LanguageModelV1;
+let modelName: string;
+
+switch (provider.toLowerCase()) {
+  case "google":
+  default:
+    // Configure for Google Gemini
+    // Ensure GOOGLE_API_KEY is in your .env file
+    modelName = 'models/gemini-1.5-flash-latest';
+    model = google(modelName);
+    console.log(`Using AI Provider: Google Gemini`);
+    break;
+}
+
+// Export the dynamically created model instance.
+// Your agent files will import this `model` and it will be Gemini.
+export { model };
+
+console.log(`Model details: \n  Provider: ${provider}\n  Model: ${modelName}`);

@@ -17,6 +17,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import { model } from '../../config'; // Adjust path as needed
 
 // Load environment variables
 dotenv.config();
@@ -185,17 +186,30 @@ export async function getSolBalance(walletAddress: string): Promise<number> {
  * @returns {Promise<{balance: number, decimals: number}>} Token balance and decimals
  * @throws {Error} If the token balance cannot be fetched
  */
-export async function getTokenBalance(walletAddress: string) {
+export async function getTokenBalance(walletAddress: string, tokenMint: string): Promise<{ balance: number, decimals: number }> {
   try {
     if (!isValidSolanaAddress(walletAddress)) {
       throw new Error("Invalid Solana wallet address format");
     }
-    const pubKey = new PublicKey(walletAddress);
-    const balance = await connection.getBalance(pubKey);
-    return balance / LAMPORTS_PER_SOL;
+    if (!isValidSolanaAddress(tokenMint)) {
+      throw new Error("Invalid token mint address format");
+    }
+    const owner = new PublicKey(walletAddress);
+    const mint = new PublicKey(tokenMint);
+
+    // Find all token accounts for this wallet and mint
+    const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint });
+    if (!accounts.value.length) {
+      return { balance: 0, decimals: 0 };
+    }
+    const accountInfo = accounts.value[0].account.data.parsed.info;
+    return {
+      balance: Number(accountInfo.tokenAmount.amount) / Math.pow(10, accountInfo.tokenAmount.decimals),
+      decimals: accountInfo.tokenAmount.decimals
+    };
   } catch (error) {
-    console.error("Error fetching token balance:", error);
-    return 0;
+    console.error("Error fetching SPL token balance:", error);
+    return { balance: 0, decimals: 0 };
   }
 }
 
@@ -324,7 +338,7 @@ export async function withRetry<T>(
  * @returns {Promise<Transaction[]>} Array of recent transactions
  * @throws {Error} If transactions cannot be fetched
  */
-export async function getRecentTransactions(walletAddress: string, limit: number = 10) {
+export async function getRecentTransactions(walletAddress: string, limit: number = 10): Promise<Transaction[]> {
   try {
     if (!isValidSolanaAddress(walletAddress)) {
       throw new Error("Invalid Solana wallet address format");
@@ -389,7 +403,14 @@ export async function getRecentTransactions(walletAddress: string, limit: number
   }
 }
 
-
+export interface Transaction {
+  signature: string;
+  timestamp: number | null | undefined;
+  type: string;
+  amount: number;
+  programIds: string[];
+  status: string;
+}
 
 /**
  * Fetches and aggregates crypto news from multiple sources
