@@ -1,429 +1,115 @@
-/**
- * Solana Onchain Assistant - MCP Server
- * 
- * This file implements a Model Context Protocol (MCP) server that provides various tools
- * for analyzing Solana blockchain data, including:
- * - Token price and sentiment analysis
- * - Wallet activity monitoring
- * - Portfolio analysis
- * - Crypto news aggregation
- * - Token risk analysis
- * 
- * The server uses the MCP SDK to expose these tools as API endpoints that can be called
- * by AI models or other applications.
- * 
- * @module src/index
- */
-
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createTool } from "@mastra/core/tools";
+import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
+import { google } from '@ai-sdk/google'; // Import Google for Gemini
 import {
-  isValidSolanaAddress,
-  getTokenBalance,
-  getTokenPriceData,
-  getRecentTransactions,
-  getAllNews,
-  getOnChainTokenData,
-  getTokenHoldersDistribution,
-  analyzeTransactionPatterns,
-  analyzeHolderConcentration,
-  analyzeLiquidity
-} from "./helpers.js";
+    isValidSolanaAddress,
+    getTokenHoldersDistribution,
+    analyzeHolderConcentration,
+    analyzeTransactionPatterns,
+    analyzeLiquidity,
+    getOnChainTokenData
+} from "./helpers"; // Import from the local helper file
 
-/**
- * MCP Server Configuration
- * Creates a new MCP server instance with the specified name and version.
- * This server will handle all tool requests and manage the communication protocol.
- */
-const server = new McpServer({
-  name: "Solana Onchain Assistant",
-  version: "1.0.0"
+// --- 1. DEFINE THE TOOL ---
+// This tool encapsulates the risk analysis logic from your helpers.
+
+const riskAnalysisSchema = z.object({
+    riskScore: z.number().describe("Overall risk score from 0 (high risk) to 100 (low risk)."),
+    riskLevel: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREMELY HIGH"]),
+    summary: z.string().describe("A human-readable summary of the risk analysis."),
+    detailedMetrics: z.object({
+        liquidityScore: z.number(),
+        holderConcentrationScore: z.number(),
+        transactionPatternScore: z.number(),
+    }),
+    riskFactors: z.array(z.string()).describe("A list of specific red flags or warnings detected.")
 });
 
-/**
- * Token Price and Sentiment Analysis Tool
- * 
- * Retrieves current price data and market metrics for a specified token.
- * Supports searching by token ID, symbol, or name.
- * 
- * @tool get-token-price
- * @param {string} tokenId - Token identifier (ID, symbol, or name)
- * @returns {Object} Token price data including current price, 24h/7d changes, and volume
- */
-server.tool(
-  "get-token-price",
-  {
-    tokenId: z.string()
-      .describe("Request a token price (can be the token's ID like 'bitcoin', symbol like 'btc', or name like 'Bitcoin')")
-  },
-  async ({ tokenId }) => {
-    try {
-      const analysis = await getTokenPriceData(tokenId);
-      
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify(analysis, null, 2)
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: `Error analyzing token: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }],
-        isError: true
-      };
-    }
-  }
-);
+export const analyzeTokenRiskTool = createTool({
+    id: "analyze-solana-token-risk",
+    description: "Analyzes a Solana token for potential risks, rug-pull indicators, and fraud. Use this to assess the safety of a token given its mint address.",
+    inputSchema: z.object({
+        tokenAddress: z.string()
+            .describe("The Solana token mint address to analyze.")
+            .refine(isValidSolanaAddress, {
+                message: "Invalid token address format. Please provide a valid Solana address."
+            })
+    }),
+    outputSchema: riskAnalysisSchema,
+    execute: async ({ context }) => {
+        const { tokenAddress } = context;
 
-/**
- * Wallet Activity Analysis Tool
- * 
- * Analyzes a Solana wallet's recent activity, including:
- * - Current SOL balance
- * - Transaction history
- * - Activity categorization (DeFi, NFT, Token transfers)
- * - Time-based filtering
- * 
- * @tool get-address-activity
- * @param {string} walletAddress - Solana wallet address to analyze
- * @param {string} timeRange - Analysis time range (24h, 7d, or 30d)
- * @returns {Object} Wallet activity analysis including balance, transaction counts, and recent activity
- */
-server.tool(
-  "get-address-activity",
-  {
-    walletAddress: z.string()
-      .describe("Solana wallet address to check activity for (must be a valid base58 address)")
-      .refine(isValidSolanaAddress, {
-        message: "Invalid Solana wallet address format. Please provide a valid base58 address."
-      }),
-    timeRange: z.enum(["24h", "7d", "30d"]).default("7d").describe("Time range to check activity for (24h, 7d, or 30d)")
-  },
-  async ({ walletAddress, timeRange }) => {
-    try {
-      // Get wallet balance
-      const balance = await getTokenBalance(walletAddress);
-      
-      // Get recent transactions
-      const transactions = await getRecentTransactions(walletAddress, 20);
-      
-      // Calculate time-based filtering
-      const now = Math.floor(Date.now() / 1000);
-      const timeRanges = {
-        "24h": now - 86400,
-        "7d": now - 604800,
-        "30d": now - 2592000
-      };
-      const startTime = timeRanges[timeRange];
-      
-      // Filter transactions by time range
-      const filteredTransactions = transactions.filter(tx => 
-        tx.timestamp && tx.timestamp >= startTime
-      );
-      
-      // Analyze transaction types
-      const analysis = {
-        totalBalance: balance,
-        transactionCount: filteredTransactions.length,
-        transactionTypes: {
-          defi: filteredTransactions.filter(tx => tx.type === "DeFi").length,
-          nft: filteredTransactions.filter(tx => tx.type === "NFT").length,
-          token: filteredTransactions.filter(tx => tx.type === "Token Transfer").length
-        },
-        recentActivity: filteredTransactions.slice(0, 5).map(tx => ({
-          type: tx.type,
-          amount: tx.amount,
-          timestamp: new Date(tx.timestamp! * 1000).toISOString(),
-          status: tx.status
-        })),
-        timeRange: timeRange
-      };
+        // Verify the token exists.
+        try {
+            await getOnChainTokenData(tokenAddress);
+        } catch (error) {
+            throw new Error(`Token not found or data is inaccessible for address: ${tokenAddress}. Please verify the address.`);
+        }
 
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify(analysis, null, 2)
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: `Error checking address activity: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }],
-        isError: true
-      };
-    }
-  }
-);
+        const [holders, transactionAnalysis, liquidityAnalysis] = await Promise.all([
+            getTokenHoldersDistribution(tokenAddress),
+            analyzeTransactionPatterns(tokenAddress),
+            analyzeLiquidity(tokenAddress),
+        ]);
 
+        const holderAnalysis = analyzeHolderConcentration(holders);
 
-/**
- * Crypto News Aggregation Tool
- * 
- * Fetches and aggregates latest crypto and web3 news from multiple sources.
- * Features:
- * - Category-based filtering
- * - Mobile-friendly formatting
- * - Trending topics analysis
- * - Sentiment analysis
- * 
- * @tool get-latest-crypto-news
- * @param {string} category - News category (all, defi, nft, web3, trading)
- * @param {number} limit - Maximum number of articles to return (1-20)
- * @param {string} format - Response format (mobile or detailed)
- * @returns {Object|string} News articles in either detailed JSON or mobile-friendly format
- */
-server.tool(
-  "get-latest-crypto-news",
-  {
-    category: z.enum(['all', 'defi', 'nft', 'web3', 'trading']).default('all')
-      .describe("Category of news to fetch (all, defi, nft, web3, or trading)"),
-    limit: z.number().min(1).max(20).default(10)
-      .describe("Maximum number of news articles to return (1-20)"),
-    format: z.enum(['mobile', 'detailed']).default('mobile')
-      .describe("Response format - 'mobile' for concise mobile-friendly format, 'detailed' for full JSON")
-  },
-  async ({ category, limit, format }) => {
-    try {
-      // Get all news
-      const newsData = await getAllNews();
-      
-      // Filter by category if not 'all'
-      let filteredArticles = newsData.articles;
-      if (category !== 'all') {
-        filteredArticles = newsData.articles.filter(article => 
-          article.categories.some(cat => 
-            cat.toLowerCase().includes(category.toLowerCase())
-          )
+        const overallRiskScore = Math.round(
+            (holderAnalysis.score * 0.4) +
+            (transactionAnalysis.score * 0.3) +
+            (liquidityAnalysis.score * 0.3)
         );
-      }
 
-      // Apply limit
-      filteredArticles = filteredArticles.slice(0, limit);
+        const allRiskFactors = [
+            ...holderAnalysis.factors,
+            ...transactionAnalysis.factors,
+            ...liquidityAnalysis.factors
+        ];
 
-      if (format === 'detailed') {
-        // Return detailed JSON format
-        const response = {
-          summary: {
-            totalResults: newsData.totalResults,
-            category,
-            trendingTopics: newsData.trendingTopics,
-            lastUpdated: newsData.lastUpdated
-          },
-          articles: filteredArticles.map(article => ({
-            title: article.title,
-            summary: article.summary,
-            source: article.source,
-            url: article.url,
-            publishedAt: new Date(article.publishedAt).toLocaleString(),
-            sentiment: article.sentiment,
-            categories: article.categories
-          }))
-        };
+        let riskLevel: "LOW" | "MEDIUM" | "HIGH" | "EXTREMELY HIGH" = "LOW";
+        if (overallRiskScore < 40) riskLevel = "EXTREMELY HIGH";
+        else if (overallRiskScore < 60) riskLevel = "HIGH";
+        else if (overallRiskScore < 80) riskLevel = "MEDIUM";
 
+        const summary = `Token Risk Analysis for ${tokenAddress}:\nThe overall risk score is ${overallRiskScore}/100, which is considered ${riskLevel} RISK. ${allRiskFactors.length > 0 ? 'Key risk factors include: ' + allRiskFactors.join(', ') : 'No significant risk factors were detected.'}`;
+        
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(response, null, 2)
-          }]
+            riskScore: overallRiskScore,
+            riskLevel,
+            summary,
+            detailedMetrics: {
+                liquidityScore: liquidityAnalysis.score,
+                holderConcentrationScore: holderAnalysis.score,
+                transactionPatternScore: transactionAnalysis.score,
+            },
+            riskFactors: allRiskFactors
         };
-      } else {
-        // Return mobile-friendly format
-        const now = new Date();
-        const lastUpdated = new Date(newsData.lastUpdated);
-        const timeAgo = Math.floor((now.getTime() - lastUpdated.getTime()) / (1000 * 60)); // minutes ago
+    },
+});
 
-        // Format trending topics with emojis
-        const trendingTopics = newsData.trendingTopics
-          .map(topic => `#${topic}`)
-          .join(' ');
 
-        // Create mobile-friendly article list
-        const articlesList = filteredArticles.map((article, index) => {
-          const publishedDate = new Date(article.publishedAt);
-          const hoursAgo = Math.floor((now.getTime() - publishedDate.getTime()) / (1000 * 60 * 60));
-          
-          // Add sentiment emoji
-          const sentimentEmoji = article.sentiment === 'positive' ? '📈' 
-            : article.sentiment === 'negative' ? '📉' 
-            : '➡️';
+// --- 2. DEFINE THE AGENT ---
+// This agent is given the tool we just created.
 
-          // Add category emoji
-          const categoryEmoji = article.categories.some(cat => cat.toLowerCase().includes('defi')) ? '🔄'
-            : article.categories.some(cat => cat.toLowerCase().includes('nft')) ? '🖼️'
-            : article.categories.some(cat => cat.toLowerCase().includes('web3')) ? '🌐'
-            : '💱';
+const instructions = `
+    You are a sophisticated Solana Onchain Assistant, an expert in cryptocurrency and blockchain analysis.
+    Your primary purpose is to help users make informed decisions by providing clear, accurate, and actionable on-chain data analysis.
+    When a user asks you to analyze a token for risk:
+    1. You MUST use the "analyze-solana-token-risk" tool to get the data. Do not invent information.
+    2. When presenting the analysis, state the final risk level and score clearly.
+    3. Crucially, explain the *reasons* for the score by summarizing the risk factors found by the tool.
+    4. If the tool fails or an address is invalid, inform the user clearly and politely.
+    5. Be concise but comprehensive. Start with the main conclusion, then provide the details.
+`;
 
-          return `${index + 1}. ${sentimentEmoji} ${categoryEmoji} ${article.title}
-   ${article.summary.substring(0, 100)}...
-   📰 ${article.source} • ${hoursAgo}h ago
-   🔗 ${article.url}`;
-        }).join('\n\n');
-
-        // Create mobile-friendly response
-        const mobileResponse = `📰 Latest Crypto News (${category.toUpperCase()})
-⏰ Updated ${timeAgo}m ago
-
-🔥 Trending: ${trendingTopics}
-
-${articlesList}
-
-📊 Found ${newsData.totalResults} articles • Showing top ${filteredArticles.length}`;
-
-        return {
-          content: [{
-            type: "text",
-            text: mobileResponse
-          }]
-        };
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      if (format === 'mobile') {
-        return {
-          content: [{
-            type: "text",
-            text: `❌ Error fetching news:\n${errorMessage}\n\nPlease try again in a few moments.`
-          }],
-          isError: true
-        };
-      } else {
-        return {
-          content: [{
-            type: "text",
-            text: `Error fetching crypto news: ${errorMessage}`
-          }],
-          isError: true
-        };
-      }
-    }
-  }
-);
-
-/**
- * Token Risk Analysis Tool
- * 
- * Analyzes a token for potential risks and fraud indicators:
- * - Holder concentration analysis
- * - Transaction pattern analysis
- * - Liquidity analysis
- * - Contract risk assessment
- * 
- * @tool potential-rugpull-and-fraud-token-analysis
- * @param {string} tokenAddress - Solana token address to analyze
- * @returns {Object} Risk analysis including risk score, level, and detailed metrics
- */
-server.tool(
-  "potential-rugpull-and-fraud-token-analysis",
-  {
-    tokenAddress: z.string()
-      .describe("Solana token address to analyze for fraud/rugpull risk")
-      .refine(isValidSolanaAddress, {
-        message: "Invalid token address format. Please provide a valid Solana address."
-      })
+export const solanaAgent = new Agent({
+  name: "Solana Onchain Assistant",
+  instructions,
+  // Use Google's Gemini model as requested
+  model: google('models/gemini-1.5-flash-latest'),
+  tools: {
+    // Make the tool available to the agent
+    analyzeTokenRiskTool,
   },
-  async ({ tokenAddress }) => {
-    try {
-      // Verify token exists first with retry
-      try {
-        await getOnChainTokenData(tokenAddress);
-      } catch (error) {
-        return {
-          content: [{
-            type: "text",
-            text: `Error: Unable to fetch token data. This could be due to:
-1. Invalid token address
-2. Network connectivity issues
-3. Token no longer exists
-Please verify the token address and try again.`
-          }],
-          isError: true
-        };
-      }
-
-      // Get all metrics with retry logic
-      const holders = await getTokenHoldersDistribution(tokenAddress);
-      const holderAnalysis = analyzeHolderConcentration(holders);
-      const transactionAnalysis = await analyzeTransactionPatterns(tokenAddress);
-      const liquidityAnalysis = await analyzeLiquidity(tokenAddress);
-
-      // Calculate overall risk score (weighted average)
-      const overallRiskScore = Math.round(
-        (holderAnalysis.score * 0.4) + // 40% weight to holder concentration
-        (transactionAnalysis.score * 0.3) + // 30% weight to transaction patterns
-        (liquidityAnalysis.score * 0.3) // 30% weight to liquidity
-      );
-
-      // Combine all risk factors
-      const allRiskFactors = [
-        ...holderAnalysis.factors,
-        ...transactionAnalysis.factors,
-        ...liquidityAnalysis.factors
-      ];
-
-      // Add warning if we couldn't get all data
-      if (holders.length === 0) {
-        allRiskFactors.push("Warning: Could not fetch holder distribution data");
-      }
-      if (transactionAnalysis.score === 0) {
-        allRiskFactors.push("Warning: Could not fetch transaction data");
-      }
-
-      const analysis = {
-        liquidityScore: liquidityAnalysis.score,
-        holderConcentrationScore: holderAnalysis.score,
-        transactionPatternScore: transactionAnalysis.score,
-        contractRiskScore: 100,
-        overallRiskScore,
-        riskFactors: allRiskFactors
-      };
-
-      // Generate risk assessment message
-      let riskLevel = "LOW";
-      if (overallRiskScore < 40) {
-        riskLevel = "EXTREMELY HIGH";
-      } else if (overallRiskScore < 60) {
-        riskLevel = "HIGH";
-      } else if (overallRiskScore < 80) {
-        riskLevel = "MEDIUM";
-      }
-
-      const response = {
-        riskScore: overallRiskScore,
-        riskLevel,
-        detailedMetrics: analysis,
-        summary: `Token Risk Analysis (${overallRiskScore}% risk score - ${riskLevel} RISK):
-        ${allRiskFactors.length > 0 ? '\nRisk Factors:\n- ' + allRiskFactors.join('\n- ') : 'No significant risk factors detected'}`
-      };
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify(response, null, 2)
-        }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: `Error analyzing token risk: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again in a few moments.`
-        }],
-        isError: true
-      };
-    }
-  }
-);
-
-/**
- * Server Initialization
- * Creates and starts the MCP server using stdio transport.
- * This enables communication between the server and client applications.
- */
-const transport = new StdioServerTransport();
-await server.connect(transport); 
+});

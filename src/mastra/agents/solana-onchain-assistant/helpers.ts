@@ -9,8 +9,6 @@
  * - News aggregation
  * - Risk analysis
  * 
- * The functions are designed to be modular and reusable across different tools
- * in the MCP server.
  * 
  * @module src/helpers
  */
