@@ -19,7 +19,7 @@ switch (provider.toLowerCase()) {
   default:
     // Configure for Google Gemini
     // Ensure GOOGLE_API_KEY is in your .env file
-    modelName = 'models/gemini-1.5-flash-latest';
+    modelName = 'models/gemini-2.5-flash-lite-preview-06-17';
     model = google(modelName);
     console.log(`Using AI Provider: Google Gemini`);
     break;

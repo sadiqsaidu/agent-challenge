@@ -1,40 +1,30 @@
 /**
  * Solana Onchain Assistant - Helper Functions
- * 
- * This file contains all the helper functions and interfaces used by the Solana Onchain Assistant.
+ * * This file contains all the helper functions and interfaces used by the Solana Onchain Assistant.
  * It provides core functionality for:
  * - Blockchain interaction (connection, address validation)
  * - Token operations (balance checking, price fetching)
  * - Transaction analysis
  * - News aggregation
  * - Risk analysis
- * 
- * 
- * @module src/helpers
+ * * * @module src/helpers
  */
 
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import { model } from '../../config'; // Adjust path as needed
+import { z } from "zod";
+import { createTool } from "@mastra/core/tools";
 
 // Load environment variables
 dotenv.config();
 
-// Initialize Solana connection with Alchemy RPC
+// --- Solana Connection ---
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 if (!ALCHEMY_API_KEY) {
-  throw new Error(
-    "ALCHEMY_API_KEY not found in environment variables. " +
-    "Please create a .env file in the root directory with ALCHEMY_API_KEY=your-alchemy-api-key"
-  );
+  throw new Error("ALCHEMY_API_KEY not found in environment variables.");
 }
-
-/**
- * Solana network connection instance
- * Configured to use the mainnet-beta network with commitment level 'confirmed'
- */
 export const connection = new Connection(
   `https://solana-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
   "confirmed"
@@ -141,11 +131,10 @@ let newsCache: {
 } | null = null;
 const NEWS_CACHE_DURATION = 300000; // 5 minutes in milliseconds
 
-// Helper Functions
+// --- Helper Functions (exported) ---
 /**
  * Validates if a string is a valid Solana wallet address
- * 
- * @param {string} address - The address to validate
+ * * @param {string} address - The address to validate
  * @returns {boolean} True if the address is valid, false otherwise
  */
 export function isValidSolanaAddress(address: string): boolean {
@@ -159,8 +148,7 @@ export function isValidSolanaAddress(address: string): boolean {
 
 /**
  * Retrieves the SOL balance for a wallet address
- * 
- * @param {string} walletAddress - The wallet address to check
+ * * @param {string} walletAddress - The wallet address to check
  * @returns {Promise<number>} The SOL balance in SOL units
  * @throws {Error} If the address is invalid or balance cannot be fetched
  */
@@ -180,8 +168,7 @@ export async function getSolBalance(walletAddress: string): Promise<number> {
 
 /**
  * Retrieves the balance of a specific SPL token for a wallet
- * 
- * @param {string} walletAddress - The wallet address to check
+ * * @param {string} walletAddress - The wallet address to check
  * @param {string} tokenMint - The token's mint address
  * @returns {Promise<{balance: number, decimals: number}>} Token balance and decimals
  * @throws {Error} If the token balance cannot be fetched
@@ -256,8 +243,7 @@ export async function findToken(searchTerm: string): Promise<CoinGeckoToken | nu
 
 /**
  * Fetches price data for a token from CoinGecko
- * 
- * @param {string} tokenId - The token's CoinGecko ID
+ * * @param {string} tokenId - The token's CoinGecko ID
  * @returns {Promise<TokenPriceData>} Token price data including current price and changes
  * @throws {Error} If price data cannot be fetched
  */
@@ -332,8 +318,7 @@ export async function withRetry<T>(
 
 /**
  * Retrieves recent transactions for a wallet
- * 
- * @param {string} walletAddress - The wallet address to analyze
+ * * @param {string} walletAddress - The wallet address to analyze
  * @param {string} timeRange - The time range to analyze (24h, 7d, 30d)
  * @returns {Promise<Transaction[]>} Array of recent transactions
  * @throws {Error} If transactions cannot be fetched
@@ -414,8 +399,7 @@ export interface Transaction {
 
 /**
  * Fetches and aggregates crypto news from multiple sources
- * 
- * @returns {Promise<NewsResponse>} Aggregated news articles with trending topics
+ * * @returns {Promise<NewsResponse>} Aggregated news articles with trending topics
  * @throws {Error} If news cannot be fetched from any source
  */
 export async function getAllNews(): Promise<NewsResponse> {
@@ -464,8 +448,7 @@ export async function getAllNews(): Promise<NewsResponse> {
 
 /**
  * Fetches crypto news from CryptoCompare API
- * 
- * @returns {Promise<NewsArticle[]>} Array of crypto news articles
+ * * @returns {Promise<NewsArticle[]>} Array of crypto news articles
  * @throws {Error} If news cannot be fetched
  */
 async function fetchCryptoNews(): Promise<NewsArticle[]> {
@@ -517,8 +500,7 @@ async function fetchCryptoNews(): Promise<NewsArticle[]> {
 
 /**
  * Fetches web3 news from News API
- * 
- * @returns {Promise<NewsArticle[]>} Array of web3 news articles
+ * * @returns {Promise<NewsArticle[]>} Array of web3 news articles
  * @throws {Error} If news cannot be fetched
  */
 async function fetchWeb3News(): Promise<NewsArticle[]> {
@@ -573,8 +555,7 @@ async function fetchWeb3News(): Promise<NewsArticle[]> {
 
 /**
  * Analyzes articles to identify trending topics
- * 
- * @param {NewsArticle[]} articles - Array of news articles to analyze
+ * * @param {NewsArticle[]} articles - Array of news articles to analyze
  * @returns {string[]} Array of trending topics
  */
 function analyzeTrendingTopics(articles: NewsArticle[]): string[] {
@@ -647,13 +628,21 @@ export async function getTokenHoldersDistribution(tokenAddress: string): Promise
       throw new Error("No token accounts found");
     }
 
-    const totalSupply = tokenAccounts.value.reduce((sum, account) => sum + Number(account.amount), 0);
+    const totalSupplyAccount = await getOnChainTokenData(tokenAddress);
+    const totalSupply = totalSupplyAccount.supply / Math.pow(10, totalSupplyAccount.decimals);
     
-    return tokenAccounts.value.map(account => ({
-      address: account.address.toString(),
-      balance: Number(account.amount),
-      percentage: (Number(account.amount) / totalSupply) * 100
-    }));
+    if (totalSupply === 0) {
+      return [];
+    }
+    
+    return tokenAccounts.value.map(account => {
+      const balance = Number(account.uiAmount);
+      return {
+        address: account.address.toString(),
+        balance: balance,
+        percentage: (balance / totalSupply) * 100
+      };
+    });
   } catch (error) {
     console.error("Error fetching token holders:", error);
     return [];
@@ -665,6 +654,12 @@ export async function analyzeTransactionPatterns(tokenAddress: string): Promise<
     const transactions = await getRecentTransactions(tokenAddress, 100);
     const factors: string[] = [];
     let score = 100;
+
+    if (transactions.length < 10) {
+        score -= 20;
+        factors.push("Very few transactions found, indicating low activity.");
+        return { score: Math.max(0, score), factors };
+    }
 
     const txTypes = transactions.reduce((acc, tx) => {
       acc[tx.type] = (acc[tx.type] || 0) + 1;
@@ -679,15 +674,15 @@ export async function analyzeTransactionPatterns(tokenAddress: string): Promise<
 
     if (txTypes["Token Transfer"] > transactions.length * 0.8) {
       score -= 15;
-      factors.push("Suspicious transaction pattern: High concentration of transfers");
+      factors.push("Suspicious transaction pattern: High concentration of simple transfers");
     }
 
-    const timeSpan = transactions.length > 1 
+    const timeSpan = transactions.length > 1 && transactions[0].timestamp && transactions[transactions.length - 1].timestamp
       ? transactions[0].timestamp! - transactions[transactions.length - 1].timestamp!
       : 0;
-    if (timeSpan > 0 && transactions.length / timeSpan > 0.1) {
+    if (timeSpan > 0 && (transactions.length / timeSpan) > 0.1) { // more than 1 tx every 10 seconds
       score -= 10;
-      factors.push("Unusual transaction frequency");
+      factors.push("Unusual transaction frequency (very high)");
     }
 
     return { score: Math.max(0, score), factors };
@@ -707,79 +702,270 @@ export function analyzeHolderConcentration(holders: TokenHolder[]): { score: num
 
   const topHolder = holders[0];
   if (topHolder.percentage > 50) {
-    score -= 30;
+    score -= 40;
     factors.push(`Extreme concentration: Top holder owns ${topHolder.percentage.toFixed(2)}%`);
-  } else if (topHolder.percentage > 30) {
-    score -= 20;
+  } else if (topHolder.percentage > 20) {
+    score -= 25;
     factors.push(`High concentration: Top holder owns ${topHolder.percentage.toFixed(2)}%`);
   }
 
   const top10Percentage = holders.slice(0, 10).reduce((sum, h) => sum + h.percentage, 0);
   if (top10Percentage > 90) {
-    score -= 25;
+    score -= 30;
     factors.push(`Extreme top 10 concentration: ${top10Percentage.toFixed(2)}%`);
   } else if (top10Percentage > 70) {
-    score -= 15;
+    score -= 20;
     factors.push(`High top 10 concentration: ${top10Percentage.toFixed(2)}%`);
   }
 
   return { score: Math.max(0, score), factors };
 }
 
-export async function analyzeLiquidity(tokenAddress: string): Promise<{ score: number; factors: string[] }> {
+export async function analyzeLiquidityAndContract(tokenAddress: string): Promise<{ liquidityScore: number, contractRiskScore: number, factors: string[] }> {
   try {
     const factors: string[] = [];
-    let score = 100;
+    let liquidityScore = 100;
+    let contractRiskScore = 100;
 
-    const tokenData = await getOnChainTokenData(tokenAddress);
-    const transactions = await getRecentTransactions(tokenAddress, 100);
+    const [tokenData, transactions] = await Promise.all([
+      getOnChainTokenData(tokenAddress),
+      getRecentTransactions(tokenAddress, 100)
+    ]);
     
     const totalVolume = transactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
     const avgVolume = totalVolume / (transactions.length || 1);
     
-    if (avgVolume < 0.1) {
-      score -= 20;
-      factors.push("Very low average transaction volume");
-    } else if (avgVolume < 1) {
-      score -= 10;
-      factors.push("Low average transaction volume");
+    if (avgVolume < 1) {
+      liquidityScore -= 20;
+      factors.push("Very low average transaction SOL volume");
+    } else if (avgVolume < 10) {
+      liquidityScore -= 10;
+      factors.push("Low average transaction SOL volume");
     }
 
-    if (transactions.length > 0) {
-      const timeSpan = transactions[0].timestamp! - transactions[transactions.length - 1].timestamp!;
-      const txPerDay = (transactions.length / (timeSpan / 86400)) || 0;
-      
-      if (txPerDay < 1) {
-        score -= 15;
-        factors.push("Very low transaction frequency (less than 1 tx per day)");
-      } else if (txPerDay < 10) {
-        score -= 5;
-        factors.push("Low transaction frequency");
+    if (transactions.length > 1 && transactions[0].timestamp && transactions[transactions.length-1].timestamp) {
+      const timeSpanSeconds = transactions[0].timestamp! - transactions[transactions.length - 1].timestamp!;
+      if(timeSpanSeconds > 0) {
+        const txPerDay = (transactions.length / (timeSpanSeconds / 86400));
+        if (txPerDay < 10) {
+            liquidityScore -= 20;
+            factors.push("Very low transaction frequency (less than 10 txs per day)");
+        } else if (txPerDay < 50) {
+            liquidityScore -= 10;
+            factors.push("Low transaction frequency (less than 50 txs per day)");
+        }
       }
+    } else if (transactions.length <= 1) {
+        liquidityScore -= 30;
+        factors.push("Negligible transaction history found.");
     }
 
     if (tokenData.mintAuthority) {
-      score -= 25;
-      factors.push("Active mint authority - token supply can be increased");
+      contractRiskScore -= 50;
+      factors.push("DANGER: Active mint authority - token supply can be inflated at will.");
     }
 
     if (tokenData.freezeAuthority) {
-      score -= 15;
-      factors.push("Active freeze authority - accounts can be frozen");
+      contractRiskScore -= 40;
+      factors.push("WARNING: Active freeze authority - token holders can be frozen.");
     }
 
-    const uniqueAddresses = new Set(transactions.map(tx => tx.programIds).flat());
-    if (uniqueAddresses.size < 3) {
-      score -= 10;
-      factors.push("Limited program interaction diversity");
-    }
-
-    return { score: Math.max(0, score), factors };
-  } catch (error) {
-    console.error("Error analyzing liquidity:", error);
     return { 
-      score: 0, 
+        liquidityScore: Math.max(0, liquidityScore), 
+        contractRiskScore: Math.max(0, contractRiskScore),
+        factors
+    };
+  } catch (error) {
+    console.error("Error analyzing liquidity and contract:", error);
+    return { 
+      liquidityScore: 0, 
+      contractRiskScore: 0,
       factors: [`Error analyzing on-chain data: ${error instanceof Error ? error.message : 'Unknown error'}`] 
     };
   }
 }
+
+/**
+ * [NEW] Main analysis function that combines all risk metrics.
+ */
+export async function analyzeTokenRisk(tokenAddress: string): Promise<TokenRiskMetrics> {
+  if (!isValidSolanaAddress(tokenAddress)) {
+    throw new Error("Invalid Solana token address provided.");
+  }
+  
+  const [
+    liquidityAndContractAnalysis,
+    holders,
+    transactionAnalysis,
+  ] = await Promise.all([
+    analyzeLiquidityAndContract(tokenAddress),
+    getTokenHoldersDistribution(tokenAddress),
+    analyzeTransactionPatterns(tokenAddress),
+  ]);
+
+  const holderAnalysis = analyzeHolderConcentration(holders);
+
+  const allFactors = [
+    ...liquidityAndContractAnalysis.factors,
+    ...holderAnalysis.factors,
+    ...transactionAnalysis.factors,
+  ];
+
+  const scores = [
+    liquidityAndContractAnalysis.liquidityScore,
+    liquidityAndContractAnalysis.contractRiskScore,
+    holderAnalysis.score,
+    transactionAnalysis.score,
+  ];
+  
+  const overallRiskScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+
+  return {
+    liquidityScore: liquidityAndContractAnalysis.liquidityScore,
+    contractRiskScore: liquidityAndContractAnalysis.contractRiskScore,
+    holderConcentrationScore: holderAnalysis.score,
+    transactionPatternScore: transactionAnalysis.score,
+    overallRiskScore: Math.round(overallRiskScore),
+    riskFactors: allFactors.length > 0 ? allFactors : ["No significant risk factors identified."],
+  };
+}
+
+
+// --- Tool Wrappers (exported) ---
+export const getSolBalanceTool = createTool({
+  id: "get-sol-balance",
+  description: "Get the SOL balance for a given Solana wallet address.",
+  inputSchema: z.object({ walletAddress: z.string() }),
+  outputSchema: z.object({ balance: z.number() }),
+  execute: async ({ context }) => {
+    const { walletAddress } = context;
+    const balance = await getSolBalance(walletAddress);
+    return { balance };
+  },
+});
+
+export const getTokenBalanceTool = createTool({
+  id: "get-token-balance",
+  description: "Get the SPL token balance for a given wallet and token mint address.",
+  inputSchema: z.object({
+    walletAddress: z.string(),
+    tokenMint: z.string(),
+  }),
+  outputSchema: z.object({
+    balance: z.number(),
+    decimals: z.number(),
+  }),
+  execute: async ({ context }) => {
+    const { walletAddress, tokenMint } = context;
+    return await getTokenBalance(walletAddress, tokenMint);
+  },
+});
+
+export const getTokenPriceDataTool = createTool({
+  id: "get-token-price-data",
+  description: "Get price and price change data for a token from CoinGecko.",
+  inputSchema: z.object({
+    tokenId: z.string().describe("The token's CoinGecko ID, symbol, or name."),
+  }),
+  outputSchema: z.object({
+    name: z.string(),
+    symbol: z.string(),
+    price: z.number(),
+    priceChange24h: z.number(),
+    priceChange7d: z.number(),
+    volume24h: z.number(),
+    lastUpdated: z.string(),
+    tokenId: z.string(),
+  }),
+  execute: async ({ context }) => {
+    const { tokenId } = context;
+    return await getTokenPriceData(tokenId);
+  },
+});
+
+export const getAllNewsTool = createTool({
+  id: "get-all-news",
+  description: "Fetch the latest crypto and web3 news articles.",
+  inputSchema: z.object({}),
+  outputSchema: z.object({
+    articles: z.array(z.object({
+      title: z.string(),
+      summary: z.string(),
+      source: z.string(),
+      url: z.string(),
+      publishedAt: z.string(),
+      categories: z.array(z.string()),
+      sentiment: z.string().optional(),
+      relevanceScore: z.number().optional(),
+    })),
+    totalResults: z.number(),
+    lastUpdated: z.string(),
+    trendingTopics: z.array(z.string()),
+  }),
+  execute: async () => {
+    return await getAllNews();
+  },
+});
+
+export const getRecentTransactionsTool = createTool({
+  id: "get-recent-transactions",
+  description: "Get recent transactions for a wallet or token address.",
+  inputSchema: z.object({
+    address: z.string().describe("The Solana wallet or token address."),
+    limit: z.number().min(1).max(100).default(10).optional(),
+  }),
+  outputSchema: z.array(z.object({
+    signature: z.string(),
+    timestamp: z.number().nullable().optional(),
+    type: z.string(),
+    amount: z.number(),
+    programIds: z.array(z.string()),
+    status: z.string(),
+  })),
+  execute: async ({ context }) => {
+    const { address, limit } = context;
+    return await getRecentTransactions(address, limit ?? 10);
+  },
+});
+
+export const getOnChainTokenDataTool = createTool({
+  id: "get-onchain-token-data",
+  description: "Get on-chain metadata for a Solana token mint address.",
+  inputSchema: z.object({
+    tokenAddress: z.string().describe("The Solana token mint address."),
+  }),
+  outputSchema: z.object({
+    supply: z.number(),
+    decimals: z.number(),
+    mintAuthority: z.string().nullable(),
+    freezeAuthority: z.string().nullable(),
+  }),
+  execute: async ({ context }) => {
+    const { tokenAddress } = context;
+    return await getOnChainTokenData(tokenAddress);
+  },
+});
+
+/**
+ * [NEW TOOL]
+ * The missing tool that combines all analysis functions.
+ */
+export const analyzeTokenRiskTool = createTool({
+  id: "analyze-solana-token-risk",
+  description: "Analyzes a Solana token for risk factors including liquidity, holder concentration, and contract vulnerabilities.",
+  inputSchema: z.object({
+    tokenAddress: z.string().describe("The Solana token mint address to analyze."),
+  }),
+  outputSchema: z.object({
+    liquidityScore: z.number(),
+    holderConcentrationScore: z.number(),
+    transactionPatternScore: z.number(),
+    contractRiskScore: z.number(),
+    overallRiskScore: z.number(),
+    riskFactors: z.array(z.string()),
+  }),
+  execute: async ({ context }) => {
+    const { tokenAddress } = context;
+    return await analyzeTokenRisk(tokenAddress);
+  },
+});
