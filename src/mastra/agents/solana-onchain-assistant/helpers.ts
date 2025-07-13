@@ -10,9 +10,15 @@
  * * * @module src/helpers
  */
 
+// 1️⃣ Polyfill fetch *before* importing @solana/web3.js
+import fetch from "node-fetch";
+if (!globalThis.fetch) {
+  // @ts-ignore
+  globalThis.fetch = fetch;
+}
+
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import fetch from "node-fetch";
 import dotenv from "dotenv";
 import { z } from "zod";
 import { createTool } from "@mastra/core/tools";
@@ -147,22 +153,34 @@ export function isValidSolanaAddress(address: string): boolean {
 }
 
 /**
- * Retrieves the SOL balance for a wallet address
- * * @param {string} walletAddress - The wallet address to check
- * @returns {Promise<number>} The SOL balance in SOL units
- * @throws {Error} If the address is invalid or balance cannot be fetched
+ * Fetch the SOL balance for a wallet, with retries and proper error signaling.
+ * @param walletAddress - Base58-encoded Solana public key
+ * @returns Number of SOL (could be fractional), or null if the fetch ultimately fails.
  */
-export async function getSolBalance(walletAddress: string): Promise<number> {
+export async function getSolBalance(
+  walletAddress: string
+): Promise<number | null> {
+  // 2️⃣ Validate format upfront
+  if (!isValidSolanaAddress(walletAddress)) {
+    throw new Error("Invalid Solana wallet address format");
+  }
+
+  const pubKey = new PublicKey(walletAddress);
+
   try {
-    if (!isValidSolanaAddress(walletAddress)) {
-      throw new Error("Invalid Solana wallet address format");
-    }
-    const pubKey = new PublicKey(walletAddress);
-    const balance = await connection.getBalance(pubKey);
-    return balance / LAMPORTS_PER_SOL;
+    // 3️⃣ Retry the RPC call up to 3× with 1 s backoff
+    const lamports = await withRetry(
+      () => connection.getBalance(pubKey),
+      /* maxRetries */ 3,
+      /* delayMs    */ 1000
+    );
+
+    // 4️⃣ Convert lamports to SOL
+    return lamports / LAMPORTS_PER_SOL;
   } catch (error) {
-    console.error("Error fetching token balance:", error);
-    return 0;
+    // Surface the error in logs, but don't pretend the user has 0 SOL
+    console.error("Error fetching SOL balance:", error);
+    return null;
   }
 }
 
@@ -836,10 +854,21 @@ export const getSolBalanceTool = createTool({
   id: "get-sol-balance",
   description: "Get the SOL balance for a given Solana wallet address.",
   inputSchema: z.object({ walletAddress: z.string() }),
-  outputSchema: z.object({ balance: z.number() }),
+  outputSchema: z.object({ 
+    balance: z.number().nullable(),
+    error: z.string().optional()
+  }),
   execute: async ({ context }) => {
     const { walletAddress } = context;
     const balance = await getSolBalance(walletAddress);
+    
+    if (balance === null) {
+      return { 
+        balance: null, 
+        error: "Failed to fetch SOL balance. Please check the wallet address and try again." 
+      };
+    }
+    
     return { balance };
   },
 });

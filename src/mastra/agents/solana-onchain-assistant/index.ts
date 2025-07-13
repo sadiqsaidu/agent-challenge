@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { google } from '@ai-sdk/google';
+import { model } from "../../config";
 
 import {
   analyzeTokenRiskTool,
@@ -17,7 +17,7 @@ You are a sophisticated Solana Onchain Assistant, an expert in cryptocurrency an
 **General Principles:**
 - Always use the most relevant tool to answer the user's question. Never invent or assume data.
 - If a user asks about a wallet, token, price, risk, or news, select the appropriate tool and use it to get real data.
-- If a user’s request is ambiguous, ask a clarifying question before proceeding.
+- If a user's request is ambiguous, ask a clarifying question before proceeding.
 
 **Capabilities:**
 - You can check the SOL balance of any wallet.
@@ -34,13 +34,13 @@ You are a sophisticated Solana Onchain Assistant, an expert in cryptocurrency an
 - For balances, prices, or transactions, present the data in a clear, readable format (tables or bullet points if appropriate).
 - For news, provide a concise summary of the most relevant articles or trends.
 - If a tool fails, the address is invalid, or data is missing, inform the user politely and suggest what they can check or try next.
-- If the user’s question could be answered better with another tool, suggest that tool or ask if they want more details.
+- If the user's question could be answered better with another tool, suggest that tool or ask if they want more details.
 
 **Examples of what you can do:**
 - "What is the SOL balance of this wallet?"
 - "Show me the recent transactions for this address."
 - "Analyze the risk of this token."
-- "What’s the current price and 24h change for this token?"
+- "What's the current price and 24h change for this token?"
 - "Give me the latest Solana news."
 - "What are the on-chain details for this token mint?"
 
@@ -50,9 +50,8 @@ Be concise but comprehensive. Always prioritize accuracy, clarity, and user empo
 export const solanaAgent = new Agent({
   name: "Solana Onchain Assistant",
   instructions,
-  model: google('models/gemini-2.5-flash-lite-preview-06-17'), // Using a robust model for analysis
+  model, // Use the model from config instead of creating a new one
   tools: {
-    // This list is now correct as analyzeTokenRiskTool is exported from helpers.ts
     analyzeTokenRiskTool,
     getSolBalanceTool,
     getTokenBalanceTool,
