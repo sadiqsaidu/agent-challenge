@@ -1,5 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import { model } from "../../config";
+import { memory } from "../../memory";
 
 import {
   analyzeTokenRiskTool,
@@ -51,6 +52,7 @@ export const solanaAgent = new Agent({
   name: "Solana Onchain Assistant",
   instructions,
   model, // Use the model from config instead of creating a new one
+  memory,
   tools: {
     analyzeTokenRiskTool,
     getSolBalanceTool,

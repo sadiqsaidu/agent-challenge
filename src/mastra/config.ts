@@ -1,32 +1,48 @@
+// src/mastra/config.ts
 import dotenv from "dotenv";
-import { google } from '@ai-sdk/google';
-import { LanguageModelV1 } from "@ai-sdk/provider";
+import { google, createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createOpenAI } from "@ai-sdk/openai";
+import type { LanguageModelV1 } from "@ai-sdk/provider";
 
-// Load environment variables from .env file at the root
 dotenv.config();
 
-// --- Flexible Model Configuration ---
-
-// Use an environment variable to choose the AI provider.
-// Defaults to 'google' for your development with Gemini.
-const provider = process.env.AI_PROVIDER ?? "google";
-
-let model: LanguageModelV1;
-let modelName: string;
-
-switch (provider.toLowerCase()) {
-  case "google":
-  default:
-    // Configure for Google Gemini
-    // Ensure GOOGLE_API_KEY is in your .env file
-    modelName = 'models/gemini-2.5-flash-lite-preview-06-17';
-    model = google(modelName);
-    console.log(`Using AI Provider: Google Gemini`);
-    break;
+function required(key: string): string {
+  const value = process.env[key];
+  if (!value) throw new Error(`Missing env var: ${key}`);
+  return value;
 }
 
-// Export the dynamically created model instance.
-// Your agent files will import this `model` and it will be Gemini.
-export { model };
+const provider = (process.env.AI_PROVIDER ?? "google").toLowerCase();
+let model: LanguageModelV1;
 
-console.log(`Model details: \n  Provider: ${provider}\n  Model: ${modelName}`);
+switch (provider) {
+  case "google": {
+    const apiKey = required("GOOGLE_GENERATIVE_AI_API_KEY");
+    const googleProvider = createGoogleGenerativeAI({ apiKey });
+    const modelName = "models/gemini-2.5-flash-lite-preview-06-17";
+    model = googleProvider(modelName);
+    console.log(`🔮 Using Google Gemini (${modelName})`);
+    break;
+  }
+
+  case "qwen": {
+    const baseURL = required("API_BASE_URL");          // https://…/v1
+    const apiKey = required("QWEN_API_KEY");           // dummy is fine
+    const modelName = required("MODEL_NAME_AT_ENDPOINT");
+
+    const openAIProvider = createOpenAI({
+      baseURL,
+      apiKey,
+      compatibility: "compatible",
+    });
+
+    model = openAIProvider(modelName);
+    console.log(`🤖 Using Qwen (${modelName}) @ ${baseURL}`);
+    break;
+  }
+
+  default:
+    throw new Error(`Unsupported AI_PROVIDER: ${provider}`);
+}
+
+export { model };
